@@ -61,7 +61,7 @@ impl<'i> Iterator for CaptureTag<'i> {
                 // </tag>
                 Ok('<') if in_page => match self.peek_tag().as_str() {
                     s if self.is_end_pattern(s) => {
-                        in_page = false;
+                        // in_page = false;
                         text_buffer.push_str(s);
                         text_buffer.push('>');
                         return Some(text_buffer);

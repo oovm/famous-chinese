@@ -1,18 +1,17 @@
-use std::{collections::BTreeSet, sync::LazyLock};
+use std::{collections::BTreeSet, mem::take, sync::LazyLock};
 
 use regex::Regex;
 use serde_derive::{Deserialize, Serialize};
-use tl::queryselector::iterable::QueryIterable;
+
 use zhconv::{zhconv_mw, Variant};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Page {
-    pub raw: String,
     pub title: String,
+    pub raw: String,
     pub categories: BTreeSet<String>,
 }
 
-// [[Category:1955年啟用的鐵路車站]]
 pub static CATEGORY_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:\[\[)Category:([^]]+)(?:]])").unwrap());
 
 pub static TITLE_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:<title>)([^<]+)(?:</title>)").unwrap());
@@ -37,6 +36,40 @@ impl Page {
         for i in self.categories.iter() {
             if i.contains(s) {
                 return true;
+            }
+        }
+        false
+    }
+    pub fn decomposition(&mut self) {
+        let cats = take(&mut self.categories);
+        if self.drop_title() {
+            return;
+        }
+        for item in cats {
+            for item in item.split('|') {
+                self.categories.insert(item.trim().to_string());
+            }
+        }
+    }
+    fn drop_title(&self) -> bool {
+        if self.title.starts_with(|c: char| c.is_ascii_alphanumeric()) {
+            return true;
+        }
+        if self.title.starts_with("中国") || self.title.starts_with("中华") {
+            return true;
+        }
+        if self.title.ends_with("列表") {
+            return true;
+        }
+        false
+    }
+
+    pub fn end_with(&self, patterns: &[&'static str]) -> bool {
+        for i in self.categories.iter() {
+            for end in patterns {
+                if i.ends_with(end) {
+                    return true;
+                }
             }
         }
         false
