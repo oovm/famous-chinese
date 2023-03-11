@@ -1,18 +1,17 @@
 #![feature(once_cell)]
 
-use std::cell::LazyCell;
-use std::fs::{File, read_to_string};
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::iter::Peekable;
 use std::path::Path;
 use std::sync::LazyLock;
 
+use itertools::{Itertools, PeekingNext};
 use regex::Regex;
-
-pub use errors::{Error, Result};
+use utf8_chars::{BufReadCharsExt, Chars};
 
 mod errors;
 
-use quick_xml::events::Event;
-use quick_xml::reader::Reader;
 // [[Category:1955年啟用的鐵路車站]]
 pub static CATEGORY_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[\[Category:([^]]+)]]").unwrap());
 
@@ -20,39 +19,88 @@ pub static CATEGORY_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[\[C
 fn main() {
     let here = Path::new(env!("CARGO_MANIFEST_DIR")).join("../wikipedia").canonicalize().unwrap();
     let data = here.join("zhwiki-20230301-pages-articles-multistream.xml");
-    let mut reader = Reader::from_file(&data).unwrap();
-    reader.trim_text(true);
+    let mut reader = BufReader::new(File::open(data).unwrap());
+    let mut stream = CaptureTag::new(&mut reader, "page").unwrap();
+    for page in stream.take(1) {
+        println!("{}", page.text);
+    }
+}
 
 
-    let mut count = 0;
-    let mut txt = Vec::new();
-    let mut buf = Vec::new();
+pub struct Page {
+    pub text: String,
+}
 
-// The `Reader` does not implement `Iterator` because it outputs borrowed data (`Cow`s)
-    loop {
-        // NOTE: this is the generic case when we don't know about the input BufRead.
-        // when the input is a &str or a &[u8], we don't actually need to use another
-        // buffer, we could directly call `reader.read_event()`
-        match reader.read_event_into(&mut buf) {
-            Err(e) => panic!("Error at position {}: {:?}", reader.buffer_position(), e),
-            // exits the loop when reaching end of file
-            Ok(Event::Eof) => break,
+pub struct CaptureTag<'i>
+{
+    pattern: String,
+    buffer: String,
+    reader: Peekable<Chars<'i, BufReader<File>>>,
+}
 
-            Ok(Event::Start(e)) => {
-                match e.name().as_ref() {
-                    b"tag1" => println!("attributes values: {:?}",
-                                        e.attributes().map(|a| a.unwrap().value)
-                                            .collect::<Vec<_>>()),
-                    b"tag2" => count += 1,
-                    _ => (),
+impl<'i> CaptureTag<'i> {
+    pub fn new<S: Into<String>>(br: &'i mut BufReader<File>, tag: S) -> std::io::Result<Self> {
+        let reader = br.chars().peekable();
+        Ok(Self {
+            pattern: tag.into(),
+            buffer: String::new(),
+            reader,
+        })
+    }
+    fn peek_tag(&mut self) -> String {
+        let mut peek_buffer = String::new();
+        // peek until >
+        for item in self.reader.peeking_take_while(end_peek) {
+            match item {
+                Ok(c) => {
+                    peek_buffer.push(c)
+                }
+                Err(_) => {}
+            }
+        }
+        if !peek_buffer.is_empty() {
+            println!("peek: {}", peek_buffer)
+        }
+        peek_buffer
+    }
+}
+
+fn end_peek(c: &std::io::Result<char>) -> bool {
+    match c {
+        Ok(c) => '>'.ne(c),
+        Err(_) => false,
+    }
+}
+
+impl<'i> Iterator for CaptureTag<'i> {
+    type Item = Page;
+    // <page> ... </page>
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut text_buffer = String::new();
+        let mut in_page = false;
+        while let Some(c) = self.reader.next() {
+            match c {
+                // <tag>
+                Ok('<') if !in_page => {
+                    if self.peek_tag().eq(&self.pattern) {
+                        in_page = true;
+                    }
+                }
+                // </tag>
+                Ok('<') if in_page => {
+                    if self.peek_tag().eq(&format!("/{}", self.pattern)) {
+                        in_page = false;
+                        return Some(Page { text: text_buffer });
+                    }
+                }
+                Ok(c) if in_page => {
+                    text_buffer.push(c);
+                }
+                _ => {
+                    continue;
                 }
             }
-            Ok(Event::Text(e)) => txt.push(e.unescape().unwrap().into_owned()),
-
-            // There are several other `Event`s we do not consider here
-            _ => (),
         }
-        // if we don't keep a borrow elsewhere, we can clear the buffer to keep memory usage low
-        buf.clear();
+        None
     }
 }
