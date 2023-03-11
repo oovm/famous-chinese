@@ -1,10 +1,13 @@
 use std::{collections::BTreeSet, sync::LazyLock};
 
 use regex::Regex;
+use serde_derive::{Deserialize, Serialize};
 use tl::queryselector::iterable::QueryIterable;
+use zhconv::{zhconv_mw, Variant};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Page {
+    pub raw: String,
     pub title: String,
     pub categories: BTreeSet<String>,
 }
@@ -17,12 +20,15 @@ pub static TITLE_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:<titl
 impl Page {
     pub fn build<S: Into<String>>(text: S) -> Option<Self> {
         let page = text.into();
-        let title = TITLE_REGEX.captures(&page)?.get(1)?.as_str().to_string();
+        let raw = TITLE_REGEX.captures(&page)?.get(1)?.as_str();
+        let title = zhconv_mw(raw, Variant::ZhHans);
         let mut categories = BTreeSet::default();
         for item in CATEGORY_REGEX.captures_iter(&page) {
-            categories.insert(item.get(1)?.as_str().to_string());
+            let cats = item.get(1)?.as_str();
+            let hans = zhconv_mw(cats, Variant::ZhHans);
+            categories.insert(hans);
         }
-        Some(Self { title, categories })
+        Some(Self { raw: raw.to_string(), title, categories })
     }
     pub fn exact_contains(&self, s: &str) -> bool {
         self.categories.contains(s)
