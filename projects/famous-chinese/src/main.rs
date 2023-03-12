@@ -1,11 +1,11 @@
 #![feature(once_cell)]
 
-use itertools::Itertools;
 use std::{fs::File, io::BufReader, path::Path};
 
 use serde::Serialize;
 use serde_json::{ser::PrettyFormatter, Serializer};
 
+use crate::people_group::PeopleGroup;
 pub use crate::{filter_page::Page, pair_tags::CaptureTag};
 
 mod errors;
@@ -53,15 +53,14 @@ pub fn find_people_like() -> std::io::Result<()> {
     let here = Path::new(env!("CARGO_MANIFEST_DIR")).join("../wikipedia").canonicalize()?;
     let mut data: Vec<Page> = serde_json::from_reader(File::open(here.join("pages.json"))?).unwrap();
     println!("已载入 {} 个页面", data.len());
-    let mut people = vec![];
+    let mut people = PeopleGroup::default();
     for item in data.iter_mut() {
         item.decomposition();
         if item.end_with(&["人", "姓", "员", "家", "长", "士", "帝", "校友", "书记"]) {
             println!("{:?}", item);
-            people.push(item.clone());
+            people.insert(item);
         }
     }
-    let people = people.into_iter().sorted_by(|l, r| l.title.cmp(&r.title)).collect_vec();
-    save_json(people, &here.join("people.json"))?;
+    save_json(people.as_set(), &here.join("people.json"))?;
     Ok(())
 }

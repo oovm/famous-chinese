@@ -1,20 +1,32 @@
-use std::{collections::BTreeSet, mem::take, sync::LazyLock};
+use std::{cmp::Ordering, collections::BTreeSet, mem::take, sync::LazyLock};
 
 use regex::Regex;
 use serde_derive::{Deserialize, Serialize};
 
 use zhconv::{zhconv_mw, Variant};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+pub static CATEGORY_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:\[\[)Category:([^]]+)(?:]])").unwrap());
+
+pub static TITLE_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:<title>)([^<]+)(?:</title>)").unwrap());
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Page {
     pub title: String,
     pub raw: String,
     pub categories: BTreeSet<String>,
 }
 
-pub static CATEGORY_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:\[\[)Category:([^]]+)(?:]])").unwrap());
+impl PartialOrd<Self> for Page {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.title.partial_cmp(&other.title)
+    }
+}
 
-pub static TITLE_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:<title>)([^<]+)(?:</title>)").unwrap());
+impl Ord for Page {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.title.cmp(&other.title)
+    }
+}
 
 impl Page {
     pub fn build<S: Into<String>>(text: S) -> Option<Self> {
@@ -28,6 +40,9 @@ impl Page {
             categories.insert(hans);
         }
         Some(Self { raw: raw.to_string(), title, categories })
+    }
+    pub fn surname(&self) -> char {
+        self.title.chars().next().unwrap()
     }
     pub fn exact_contains(&self, s: &str) -> bool {
         self.categories.contains(s)
@@ -61,9 +76,11 @@ impl Page {
         if self.title.ends_with("列表") {
             return true;
         }
+        if self.title.is_empty() {
+            return true;
+        }
         false
     }
-
     pub fn end_with(&self, patterns: &[&'static str]) -> bool {
         for i in self.categories.iter() {
             for end in patterns {
